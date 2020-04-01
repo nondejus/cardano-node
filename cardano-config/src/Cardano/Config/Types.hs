@@ -358,14 +358,13 @@ data TraceOptions = TraceOptions
 -- Cardano Topology Related Data Structures
 --------------------------------------------------------------------------------
 
--- | IPv4 address with a port number.
-data NodeAddress = NodeAddress
-  { naHostAddress :: !NodeHostAddress
-  , naPort :: !PortNumber
-  } deriving (Eq, Ord, Show)
+-- | IPv4 address with a port number or a systemd activated socket.
+data NodeAddress = ActivatedSocket | NodeAddress !NodeHostAddress !PortNumber
+  deriving (Eq, Ord, Show)
 
 instance Condense NodeAddress where
   condense (NodeAddress addr port) = show addr ++ ":" ++ show port
+  condense ActivatedSocket = "Activated sockets currently in use"
 
 instance FromJSON NodeAddress where
   parseJSON = withObject "NodeAddress" $ \v -> do

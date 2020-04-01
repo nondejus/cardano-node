@@ -36,7 +36,7 @@ import           Data.Proxy (Proxy (..))
 import           Data.Semigroup ((<>))
 import           Data.Text (Text, breakOn, pack, take)
 import           Network.HostName (getHostName)
-import           Network.Socket (AddrInfo)
+import           Network.Socket (AddrInfo, SockAddr)
 import           System.Directory (canonicalizePath, makeAbsolute)
 
 import           Control.Monad.Class.MonadSTM
@@ -96,7 +96,6 @@ runNode loggingLayer npm = do
     let !trace = setHostname hn $
                  llAppendName loggingLayer "node" (llBasicTrace loggingLayer)
     let tracer = contramap pack $ toLogObject trace
-
     mscFp' <- return $ extractMiscFilePaths npm
 
     nc <- parseNodeConfiguration npm
@@ -169,7 +168,6 @@ handleSimpleNode
   -- otherwise the node won't actually start.
   -> IO ()
 handleSimpleNode p trace nodeTracers npm onKernel = do
-
   let pInfo@ProtocolInfo{ pInfoConfig = cfg } = Consensus.protocolInfo p
       tracer = contramap pack $ toLogObject trace
 
@@ -178,7 +176,8 @@ handleSimpleNode p trace nodeTracers npm onKernel = do
 
   createTracers npm tracer cfg
 
-  addrs <- nodeAddressInfo npm
+  eitherAddrs <- runExceptT $ nodeAddressInfo npm
+  addrs <- either (\err -> panic $ "Cardano.Config.Topology.nodeAddressInfo: " <> show err) pure eitherAddrs
 
   dbPath <- canonDbPath npm
 
@@ -188,15 +187,20 @@ handleSimpleNode p trace nodeTracers npm onKernel = do
 
   myLocalAddr <- nodeLocalSocketAddrInfo nc npm
 
-  let diffusionArguments :: DiffusionArguments
-      diffusionArguments = createDiffusionArguments addrs myLocalAddr ipProducers dnsProducers
-      diffusionTracers :: DiffusionTracers
+  let diffusionTracers :: DiffusionTracers
       diffusionTracers = createDiffusionTracers nodeTracers
       dnsProducers :: [DnsSubscriptionTarget]
       dnsProducers = dnsSubscriptionTarget <$> dnsProducerAddrs
-      ipProducers :: IPSubscriptionTarget
-      ipProducers = ipSubscriptionTargets ipProducerAddrs
       (dnsProducerAddrs, ipProducerAddrs) = producerAddresses nt
+
+  eIps <- runExceptT $ mapM nodeAddressToSockAddr ipProducerAddrs
+
+  let ips :: [SockAddr]
+      ips = either (\err -> panic $ "Cardano.Config.Topology.nodeAddressToSockAddr: " <> show err) identity eIps
+      ipProducers :: IPSubscriptionTarget
+      ipProducers = ipSubscriptionTargets ips
+      diffusionArguments :: DiffusionArguments
+      diffusionArguments = createDiffusionArguments addrs myLocalAddr ipProducers dnsProducers
 
   removeStaleLocalSocket nc npm
 
@@ -372,12 +376,9 @@ extractMiscFilePaths npm =
     MockProtocolMode (NodeMockCLI mMscFp _ _ _) -> mMscFp
     RealProtocolMode (NodeCLI rMscFp _ _ _) -> rMscFp
 
-ipSubscriptionTargets :: [NodeAddress] -> IPSubscriptionTarget
-ipSubscriptionTargets ipProdAddrs =
-  let ips = nodeAddressToSockAddr <$> ipProdAddrs
-  in IPSubscriptionTarget { ispIps = ips
-                          , ispValency = length ips
-                          }
+ipSubscriptionTargets :: [SockAddr] -> IPSubscriptionTarget
+ipSubscriptionTargets ips =
+  IPSubscriptionTarget {ispIps = ips, ispValency = length ips}
 
 -- | NodeIds are only required for mock protocols
 nid :: NodeProtocolMode -> IO Word64

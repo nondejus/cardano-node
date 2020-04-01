@@ -12,7 +12,8 @@ ARGS=(  run
         --topology                "${TOPOLOGY}"
         --socket-path              "${root}/socket/mainnet-socket"
         --config                  "${configuration}/configuration-mainnet.yaml"
-        --port                    7776
+       # --port                    7776
+        --use-activated-sockets
 )
 
 ${NODE} "${ARGS[@]}"

@@ -59,6 +59,7 @@ library
                      , scientific
                      , string-conv
                      , stm
+                     , systemd
                      , template-haskell
                      , text
                      , transformers

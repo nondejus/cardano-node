@@ -216,14 +216,18 @@ parseCoreNodeId =
 
 parseNodeId :: String -> Parser NodeId
 parseNodeId desc =
-    option (fmap (CoreId . CoreNodeId) auto) (
-            long "node-id"
-         <> metavar "NODE-ID"
-         <> help desc
-    )
+    option (fmap (CoreId . CoreNodeId) auto) ( long "node-id"
+                                             <> metavar "NODE-ID"
+                                             <> help desc
+                                             )
 
 parseNodeAddress :: Parser NodeAddress
-parseNodeAddress = NodeAddress <$> parseHostAddr <*> parsePort
+parseNodeAddress = NodeAddress <$> parseHostAddr <*> parsePort <|> parseActivatedSocket
+
+parseActivatedSocket :: Parser NodeAddress
+parseActivatedSocket = flag' ActivatedSocket ( long "use-activated-sockets"
+                                             <> help "Use systemd activated sockets."
+                                             )
 
 parseHostAddr :: Parser NodeHostAddress
 parseHostAddr =

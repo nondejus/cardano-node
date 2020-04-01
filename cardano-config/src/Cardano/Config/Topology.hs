@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -6,8 +7,7 @@
 {-# OPTIONS_GHC -Wno-all-missed-specialisations #-}
 
 module Cardano.Config.Topology
-  ( TopologyError(..)
-  , NetworkTopology(..)
+  ( NetworkTopology(..)
   , NodeHostAddress(..)
   , NodeSetup(..)
   , RemoteAddress(..)
@@ -23,6 +23,7 @@ import           Prelude (String)
 
 import           Control.Exception (IOException)
 import qualified Control.Exception as Exception
+import           Control.Monad.Trans.Except.Extra (left, secondExceptT)
 import           Data.Aeson
 import qualified Data.ByteString as BS
 import qualified Data.IP as IP
@@ -30,32 +31,60 @@ import           Data.String.Conv (toS)
 import qualified Data.Text as T
 import           Text.Read (readMaybe)
 import           Network.Socket
+import           System.Systemd.Daemon (getActivatedSockets)
 
 import           Cardano.Config.Types
 
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 
 
-newtype TopologyError = NodeIdNotFoundInToplogyFile FilePath deriving Show
+data NodeAddressError = ActivatedSocketsNotFound deriving Show
 
-nodeAddressToSockAddr :: NodeAddress -> SockAddr
+getHostname :: SockAddr -> HostName
+getHostname (SockAddrInet _ hostAddr) =  show $ IP.fromHostAddress hostAddr
+getHostname (SockAddrInet6 _ _ hostAddr6 _) = show $ IP.fromHostAddress6 hostAddr6
+getHostname (SockAddrUnix addr) = addr
+
+nodeAddressToSockAddr :: NodeAddress -> ExceptT NodeAddressError IO SockAddr
 nodeAddressToSockAddr (NodeAddress addr port) =
   case getAddress addr of
-    Just (IP.IPv4 ipv4) -> SockAddrInet port $ IP.toHostAddress ipv4
-    Just (IP.IPv6 ipv6) -> SockAddrInet6 port 0 (IP.toHostAddress6 ipv6) 0
-    Nothing             -> SockAddrInet port 0 -- Could also be any IPv6 addr
+    Just (IP.IPv4 ipv4) -> pure $ SockAddrInet port $ IP.toHostAddress ipv4
+    Just (IP.IPv6 ipv6) -> pure $ SockAddrInet6 port 0 (IP.toHostAddress6 ipv6) 0
+    Nothing -> pure $ SockAddrInet port 0 -- Could also be any IPv6 addr
+nodeAddressToSockAddr ActivatedSocket = do
+  skts <- liftIO $ getActivatedSockets
+  skt:_ <- case skts of
+           Just skts' -> pure skts'
+           Nothing -> left ActivatedSocketsNotFound
+  liftIO $ getSocketName skt
 
-nodeAddressInfo :: NodeProtocolMode -> IO [AddrInfo]
+
+nodeAddressInfo :: NodeProtocolMode -> ExceptT NodeAddressError IO [AddrInfo]
 nodeAddressInfo npm = do
-  (NodeAddress hostAddr port) <-
-    case npm of
-      (RealProtocolMode (NodeCLI _ nodeAddr' _ _)) -> pure nodeAddr'
-      (MockProtocolMode (NodeMockCLI _ nodeAddr' _ _)) -> pure nodeAddr'
-  let hints = defaultHints {
-                addrFlags = [AI_PASSIVE, AI_ADDRCONFIG]
-              , addrSocketType = Stream
-              }
-  getAddrInfo (Just hints) (fmap show $ getAddress hostAddr) (Just $ show port)
+  case extractNodeAddress of
+    NodeAddress hostAddr port -> liftIO $ getAddrInfo (Just hints) (show <$> getAddress hostAddr) (Just $ show port)
+    ActivatedSocket -> do aSockets <- liftIO getActivatedSockets
+                          skts <- case aSockets of
+                                    Just sockets -> pure sockets
+                                    Nothing -> left ActivatedSocketsNotFound
+                          ports <- liftIO $ mapM socketPortSafe skts
+                          names <- liftIO $ mapM getSocketName skts
+                          secondExceptT concat (liftIO $ zipWithM (\port name -> getAddrInfo (Just hints) (Just name) (Just port)) (getNames ports) (getPorts names))
+ where
+  getNames :: [Maybe PortNumber] -> [ServiceName]
+  getNames ports = map show $ catMaybes ports
+
+  getPorts :: [SockAddr] -> [HostName]
+  getPorts addrs = map getHostname addrs
+
+  hints :: AddrInfo
+  hints = defaultHints { addrFlags = [AI_PASSIVE, AI_ADDRCONFIG]
+                       , addrSocketType = Stream
+                       }
+  extractNodeAddress :: NodeAddress
+  extractNodeAddress = case npm of
+                         (RealProtocolMode (NodeCLI {nodeAddr})) -> nodeAddr
+                         (MockProtocolMode (NodeMockCLI {mockNodeAddr})) -> mockNodeAddr
 
 -- | Domain name with port number
 --
@@ -111,7 +140,7 @@ instance FromJSON NodeSetup where
 
 data NetworkTopology = MockNodeTopology ![NodeSetup]
                      | RealNodeTopology ![RemoteAddress]
-  deriving Show
+                     deriving Show
 
 instance FromJSON NetworkTopology where
   parseJSON = withObject "NetworkTopology" $ \o -> asum
