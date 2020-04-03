@@ -389,7 +389,6 @@ mkTracers traceOptions tracer = do
         traceWith (measureTxsStart tracer) ev
         let tr = appendName "Mempool" tracer
         traceWith (mpTracer StructuredLogging tr) ev
-        traceWith (mpTracer TextualRepresentation (appendName "text" tr)) ev
       where
         mpTracer :: TracingFormatting -> Trace IO Text -> Tracer IO (TraceEventMempool blk)
         mpTracer fmt tr = annotateSeverity $ toLogObject' fmt tracingVerbosity tr
@@ -430,7 +429,6 @@ mkTracers traceOptions tracer = do
           Consensus.TraceNodeIsLeader{} -> teeForge' (ftTraceNodeIsLeader ft)
 
       traceWith (toLogObject' StructuredLogging tverb tr) ev
-      traceWith (toLogObject' TextualRepresentation tverb (appendName "text" tr)) ev
 
     teeForge'
       :: Trace IO Text
