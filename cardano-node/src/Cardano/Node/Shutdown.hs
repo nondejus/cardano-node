@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -19,10 +20,10 @@ module Cardano.Node.Shutdown
   )
 where
 
-import           Cardano.Prelude hiding (ByteString, atomically, take, trace)
+import           Cardano.Prelude hiding (ByteString, Text, atomically, take, trace)
 
 import qualified Control.Concurrent.Async as Async
-import           Data.Text (pack)
+import           Data.Text.Lazy (Text, pack)
 
 import qualified GHC.IO.Handle.FD as IO (fdToHandle)
 import qualified System.Process as IO (createPipeFd)
@@ -40,6 +41,7 @@ import           Ouroboros.Consensus.Util.STM (onEachChange)
 import           Ouroboros.Network.Block (MaxSlotNo(..), SlotNo, pointSlot)
 
 import           Cardano.Config.Types
+import           Cardano.Tracing.ToObjectOrphans()
 
 -- | 'ShutdownFDs' mediate the graceful shutdown requests,
 -- either external or internal to the process.
