@@ -14,7 +14,6 @@
 
 module Cardano.Tracing.ToObjectOrphans
   ( showTip
-  , defaultTextTransformer
   ) where
 
 import           Cardano.Prelude hiding (atomically, show)
@@ -108,24 +107,6 @@ showPoint verb pt =
     MinimalVerbosity -> take 7
     NormalVerbosity -> take 7
     MaximalVerbosity -> id
-
-defaultTextTransformer
-  :: ( MonadIO m
-     , HasTextFormatter b
-     , HasPrivacyAnnotation b
-     , HasSeverityAnnotation b
-     , Show b
-     , ToObject b)
-  => TracingFormatting
-  -> TracingVerbosity
-  -> Trace m Text
-  -> Tracer m b
-defaultTextTransformer TextualRepresentation _verb tr =
-  Tracer $ \s -> do
-    meta <- mkLOMeta (getSeverityAnnotation s) (getPrivacyAnnotation s)
-    traceWith tr (mempty, LogObject mempty meta (LogMessage $ pack $ show s))
-defaultTextTransformer _ verb tr =
-  trStructuredText verb tr
 
 --
 -- * instances of @HasPrivacyAnnotation@ and @HasSeverityAnnotation@
@@ -374,7 +355,7 @@ instance HasSeverityAnnotation (Identity (SubscriptionTrace LocalAddress)) where
     SubscriptionTraceCloseSocket {} -> Debug
 
 instance Transformable Text IO (Identity (SubscriptionTrace LocalAddress)) where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance HasTextFormatter (Identity (SubscriptionTrace LocalAddress)) where
   formatText _ = pack . show . toList
 
@@ -417,17 +398,17 @@ instance HasSeverityAnnotation (WithMuxBearer peer MuxTrace) where
 -- NOTE: this list is sorted by the unqualified name of the outermost type.
 
 instance Transformable Text IO NtN.HandshakeTr where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance HasTextFormatter NtN.HandshakeTr where
   formatText _ = pack . show . toList
 
 instance Transformable Text IO NtC.HandshakeTr where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance HasTextFormatter NtC.HandshakeTr where
   formatText _ = pack . show . toList
 
 instance Transformable Text IO NtN.AcceptConnectionsPolicyTrace where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance HasTextFormatter NtN.AcceptConnectionsPolicyTrace where
   formatText _ = pack . show . toList
 
@@ -437,7 +418,7 @@ instance ( HasPrivacyAnnotation (ChainDB.TraceAddBlockEvent blk)
          , Show (Ouroboros.Consensus.Block.Header blk)
          , ToObject (ChainDB.TraceAddBlockEvent blk))
  => Transformable Text IO (ChainDB.TraceAddBlockEvent blk) where
-   trTransformer = defaultTextTransformer
+   trTransformer = trStructuredText
 instance ( HasPrivacyAnnotation (ChainDB.TraceAddBlockEvent blk)
          , HasSeverityAnnotation (ChainDB.TraceAddBlockEvent blk)
          , LedgerSupportsProtocol blk
@@ -447,21 +428,26 @@ instance ( HasPrivacyAnnotation (ChainDB.TraceAddBlockEvent blk)
   formatText _ = pack . show . toList
 
 instance Transformable Text IO (TraceBlockFetchServerEvent blk) where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance HasTextFormatter (TraceBlockFetchServerEvent blk) where
   formatText _ = pack . show . toList
 
 instance (Condense (HeaderHash blk), LedgerSupportsProtocol blk)
  => Transformable Text IO (TraceChainSyncClientEvent blk) where
-  trTransformer _ verb tr = trStructured verb tr
+  trTransformer verb tr = trStructured verb tr
 
 instance Condense (HeaderHash blk)
  => Transformable Text IO (TraceChainSyncServerEvent blk b) where
-  trTransformer _ verb tr = trStructured verb tr
+  trTransformer verb tr = trStructured verb tr
 
 instance (ToObject (GenTx blk), ToJSON (GenTxId blk), Show (ApplyTxErr blk))
  => Transformable Text IO (TraceEventMempool blk) where
-  trTransformer _ verb tr = trStructured verb tr
+  trTransformer verb tr = trStructured verb tr
+
+condenseT :: Condense a => a -> Text
+condenseT = pack . condense
+showT :: Show a => a -> Text
+showT = pack . show
 
 instance ( Condense (HeaderHash blk)
          , HasTxId tx
@@ -470,174 +456,195 @@ instance ( Condense (HeaderHash blk)
          , ToObject (LedgerError blk)
          , ToObject (ValidationErr (BlockProtocol blk)))
  => Transformable Text IO (TraceForgeEvent blk tx) where
-  trTransformer TextualRepresentation _verb tr = readableForgeEventTracer $ Tracer $ \s -> do
-    meta <- mkLOMeta (getSeverityAnnotation s) (getPrivacyAnnotation s)
-    traceWith tr (mempty, LogObject mempty meta (LogMessage $ pack s))
-  -- user defined formatting of log output
-  trTransformer _ verb tr = trStructured verb tr
+  trTransformer = trStructuredText
+instance ( Condense (HeaderHash blk)
+         , HasTxId tx
+         , LedgerSupportsProtocol blk
+         , Show (TxId tx)
+         , ToObject (LedgerError blk)
+         , ToObject (ValidationErr (BlockProtocol blk)))
+ => HasTextFormatter (TraceForgeEvent blk tx) where
+   formatText = \case
+        TraceAdoptedBlock slotNo blk txs -> const $
+          "Adopted forged block for slot " <> showT (unSlotNo slotNo) <> ": " <> condenseT (blockHash blk) <> "; TxIds: " <> showT (map txId txs)
+        TraceBlockFromFuture currentSlot tip -> const $
+          "Forged block from future: current slot " <> showT (unSlotNo currentSlot) <> ", tip being " <> condenseT tip
+        TraceSlotIsImmutable slotNo tipPoint tipBlkNo -> const $
+          "Forged for immutable slot " <> showT (unSlotNo slotNo) <> ", tip: " <> pack (showPoint MaximalVerbosity tipPoint) <> ", block no: " <> showT (unBlockNo tipBlkNo)
+        TraceDidntAdoptBlock slotNo _ -> const $
+          "Didn't adopt forged block at slot " <> showT (unSlotNo slotNo)
+        TraceForgedBlock slotNo _ _ _ -> const $
+          "Forged block for slot " <> showT (unSlotNo slotNo)
+        TraceForgedInvalidBlock slotNo _ reason -> const $
+          "Forged invalid block for slot " <> showT (unSlotNo slotNo) <> ", reason: " <> showT reason
+        TraceNodeIsLeader slotNo -> const $
+          "Leading slot " <> showT (unSlotNo slotNo)
+        TraceNodeNotLeader slotNo -> const $
+          "Not leading slot " <> showT (unSlotNo slotNo)
+        TraceNoLedgerState slotNo _blk -> const $
+          "No ledger state at slot " <> showT (unSlotNo slotNo)
+        TraceNoLedgerView slotNo _ -> const $
+          "No ledger view at slot " <> showT (unSlotNo slotNo)
+        TraceStartLeadershipCheck slotNo -> const $
+          "Testing for leadership at slot " <> showT (unSlotNo slotNo)
 
 instance Show peer
  => Transformable Text IO [TraceLabelPeer peer (FetchDecision [Point header])] where
-  trTransformer _ verb tr = trStructured verb tr
+  trTransformer = trStructuredText
+instance HasTextFormatter [TraceLabelPeer peer (FetchDecision [Point header])] where
+  formatText _ = pack . show . toList
 
-instance (Show peer, HasPrivacyAnnotation a, HasSeverityAnnotation a, ToObject a)
- => Transformable Text IO (TraceLabelPeer peer a) where
-  trTransformer _ verb tr = trStructured verb tr
+--instance (Show peer, HasPrivacyAnnotation a, HasSeverityAnnotation a, ToObject a)
+-- => Transformable Text IO (TraceLabelPeer peer a) where
+--  trTransformer _ verb tr = trStructured verb tr
+instance Show peer
+ => Transformable Text IO (TraceLabelPeer peer (TraceFetchClientState header)) where
+  trTransformer = trStructuredText
+instance HasTextFormatter (TraceLabelPeer peer (TraceFetchClientState header)) where
+  formatText _ = pack . show . toList
 
 instance (Show peer, Show txid, Show tx)
  => Transformable Text IO (TraceLabelPeer peer (TraceSendRecv (TxSubmission txid tx))) where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance HasTextFormatter (TraceLabelPeer peer (TraceSendRecv (TxSubmission txid tx))) where
   formatText _ = pack . show . toList
 
 instance Transformable Text IO (TraceLocalTxSubmissionServerEvent blk) where
-  trTransformer _ verb tr = trStructured verb tr
+  trTransformer = trStructured
 
 instance ( Show blk
          , StandardHash blk
          , ToObject (AnyMessage (BlockFetch blk)))
  => Transformable Text IO (TraceLabelPeer peer (TraceSendRecv (BlockFetch blk))) where
-  trTransformer f v =
-    contramap (\(TraceLabelPeer _peer a) -> a) . defaultTextTransformer f v
+  trTransformer v =
+    contramap (\(TraceLabelPeer _peer a) -> a) . trStructuredText v
 instance HasTextFormatter (TraceSendRecv (BlockFetch blk)) where
   formatText _ = pack . show . toList
 
 instance Transformable Text IO (TraceTxSubmissionInbound (GenTxId blk) (GenTx blk)) where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance HasTextFormatter (TraceTxSubmissionInbound (GenTxId blk) (GenTx blk)) where
   formatText _ = pack . show . toList
 
 instance (Show (GenTxId blk), Show (GenTx blk))
  => Transformable Text IO (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)) where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance (Show (GenTxId blk), Show (GenTx blk))
  => HasTextFormatter (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)) where
   formatText _ = pack . show . toList
 
 instance Show addr => Transformable Text IO (WithAddr addr ErrorPolicyTrace) where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance Show addr => HasTextFormatter (WithAddr addr ErrorPolicyTrace) where
   formatText _ = pack . show . toList
 
 instance Transformable Text IO (WithDomainName (SubscriptionTrace Socket.SockAddr)) where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance HasTextFormatter (WithDomainName (SubscriptionTrace Socket.SockAddr)) where
   formatText _ = pack . show . toList
 
 instance Transformable Text IO (WithDomainName DnsTrace) where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance HasTextFormatter (WithDomainName DnsTrace) where
   formatText _ = pack . show . toList
 
 instance Transformable Text IO (WithIPList (SubscriptionTrace Socket.SockAddr)) where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance HasTextFormatter (WithIPList (SubscriptionTrace Socket.SockAddr)) where
   formatText _ = pack . show . toList
 
 instance (Show peer)
  => Transformable Text IO (WithMuxBearer peer MuxTrace) where
-  trTransformer = defaultTextTransformer
+  trTransformer = trStructuredText
 instance (Show peer)
  => HasTextFormatter (WithMuxBearer peer MuxTrace) where
   formatText (WithMuxBearer peer ev) = \_o -> "Bearer on " <> (pack $ show peer) <> " event: " <> (pack $ show ev)
 
 instance (Condense (HeaderHash blk), LedgerSupportsProtocol blk)
  => Transformable Text IO (ChainDB.TraceEvent blk) where
-  -- structure required, will call 'toObject'
-  trTransformer StructuredLogging verb tr = trStructuredText verb tr
-  -- textual output based on the readable ChainDB tracer
-  trTransformer TextualRepresentation _verb tr = readableChainDBTracer $ Tracer $ \s -> do
-    meta <- mkLOMeta (getSeverityAnnotation s) (getPrivacyAnnotation s)
-    traceWith tr (mempty, LogObject mempty meta (LogMessage $ pack s))
-  -- user defined formatting of log output
-  trTransformer UserdefinedFormatting verb tr = trStructured verb tr
-
-condense' :: Condense a => a -> Text
-condense' = pack . condense
-show' :: Show a => a -> Text
-show' = pack . show
+  trTransformer = trStructuredText
 
 instance (Condense (HeaderHash blk), LedgerSupportsProtocol blk)
  => HasTextFormatter (WithTip blk (ChainDB.TraceEvent blk)) where
    formatText = \case
       WithTip tip (ChainDB.TraceAddBlockEvent ev) -> case ev of
         ChainDB.IgnoreBlockOlderThanK pt -> const $
-          "Ignoring block older than K: " <> condense' pt
+          "Ignoring block older than K: " <> condenseT pt
         ChainDB.IgnoreBlockAlreadyInVolDB pt -> \_o ->
-          "Ignoring block already in DB: " <> condense' pt
+          "Ignoring block already in DB: " <> condenseT pt
         ChainDB.IgnoreInvalidBlock pt _reason -> \_o ->
-          "Ignoring previously seen invalid block: " <> condense' pt
+          "Ignoring previously seen invalid block: " <> condenseT pt
         ChainDB.AddedBlockToQueue pt sz -> \_o ->
-          "Block added to queue: " <> condense' pt <> " queue size " <> condense' sz
+          "Block added to queue: " <> condenseT pt <> " queue size " <> condenseT sz
         ChainDB.BlockInTheFuture pt slot -> \_o ->
-          "Ignoring block from future: " <> condense' pt <> ", slot " <> condense' slot
+          "Ignoring block from future: " <> condenseT pt <> ", slot " <> condenseT slot
         ChainDB.StoreButDontChange pt -> \_o ->
-          "Ignoring block: " <> condense' pt
+          "Ignoring block: " <> condenseT pt
         ChainDB.TryAddToCurrentChain pt -> \_o ->
-          "Block fits onto the current chain: " <> condense' pt
+          "Block fits onto the current chain: " <> condenseT pt
         ChainDB.TrySwitchToAFork pt _ -> \_o ->
-          "Block fits onto some fork: " <> condense' pt
+          "Block fits onto some fork: " <> condenseT pt
         ChainDB.AddedToCurrentChain _ _ c -> \_o ->
-          "Chain extended, new tip: " <> condense' (AF.headPoint c)
+          "Chain extended, new tip: " <> condenseT (AF.headPoint c)
         ChainDB.SwitchedToAFork _ _ c -> \_o ->
-          "Switched to a fork, new tip: " <> condense' (AF.headPoint c)
+          "Switched to a fork, new tip: " <> condenseT (AF.headPoint c)
         ChainDB.AddBlockValidation ev' -> case ev' of
           ChainDB.InvalidBlock err pt -> \_o ->
-            "Invalid block " <> condense' pt <> ": " <> show' err
+            "Invalid block " <> condenseT pt <> ": " <> showT err
           ChainDB.InvalidCandidate c -> \_o ->
-            "Invalid candidate " <> condense' (AF.headPoint c)
+            "Invalid candidate " <> condenseT (AF.headPoint c)
           ChainDB.ValidCandidate c -> \_o ->
-            "Valid candidate " <> condense' (AF.headPoint c)
+            "Valid candidate " <> condenseT (AF.headPoint c)
           ChainDB.CandidateExceedsRollback _ _ c -> \_o ->
-            "Exceeds rollback " <> condense' (AF.headPoint c)
+            "Exceeds rollback " <> condenseT (AF.headPoint c)
         ChainDB.AddedBlockToVolDB pt _ _ -> \_o ->
-          "Chain added block " <> condense' pt
+          "Chain added block " <> condenseT pt
         ChainDB.ChainChangedInBg c1 c2 -> \_o ->
-          "Chain changed in bg, from " <> condense' (AF.headPoint c1) <> " to "  <> condense' (AF.headPoint c2)
+          "Chain changed in bg, from " <> condenseT (AF.headPoint c1) <> " to "  <> condenseT (AF.headPoint c2)
         ChainDB.ScheduledChainSelection pt slot _n -> \_o ->
-          "Chain selection scheduled for future: " <> condense' pt
-                                      <> ", slot " <> condense' slot
+          "Chain selection scheduled for future: " <> condenseT pt
+                                      <> ", slot " <> condenseT slot
         ChainDB.RunningScheduledChainSelection pts slot _n -> \_o ->
-          "Running scheduled chain selection: " <> condense' (NonEmpty.toList pts)
-                                  <> ", slot " <> condense' slot
+          "Running scheduled chain selection: " <> condenseT (NonEmpty.toList pts)
+                                  <> ", slot " <> condenseT slot
       WithTip tip (ChainDB.TraceLedgerReplayEvent ev) -> case ev of
         LedgerDB.ReplayFromGenesis _replayTo -> \_o ->
           "Replaying ledger from genesis"
         LedgerDB.ReplayFromSnapshot snap tip' _replayTo -> \_o ->
-          "Replaying ledger from snapshot " <> show' snap <> " at " <>
-            condense' tip'
+          "Replaying ledger from snapshot " <> showT snap <> " at " <>
+            condenseT tip'
         LedgerDB.ReplayedBlock pt replayTo -> \_o ->
-          "Replayed block: slot " <> show' (realPointSlot pt) <> " of " <> show' (pointSlot replayTo)
+          "Replayed block: slot " <> showT (realPointSlot pt) <> " of " <> showT (pointSlot replayTo)
       WithTip tip (ChainDB.TraceLedgerEvent ev) -> case ev of
         LedgerDB.TookSnapshot snap pt -> \_o ->
-          "Took ledger snapshot " <> show' snap <> " at " <> condense' pt
+          "Took ledger snapshot " <> showT snap <> " at " <> condenseT pt
         LedgerDB.DeletedSnapshot snap -> \_o ->
-          "Deleted old snapshot " <> show' snap
+          "Deleted old snapshot " <> showT snap
         LedgerDB.InvalidSnapshot snap failure -> \_o ->
-          "Invalid snapshot " <> show' snap <> show' failure
+          "Invalid snapshot " <> showT snap <> showT failure
       WithTip tip (ChainDB.TraceCopyToImmDBEvent ev) -> case ev of
         ChainDB.CopiedBlockToImmDB pt -> \_o ->
-          "Copied block " <> condense' pt <> " to the ImmutableDB"
+          "Copied block " <> condenseT pt <> " to the ImmutableDB"
         ChainDB.NoBlocksToCopyToImmDB -> \_o ->
           "There are no blocks to copy to the ImmutableDB"
       WithTip tip (ChainDB.TraceGCEvent ev) -> case ev of
         ChainDB.PerformedGC slot -> \_o -> 
-          "Performed a garbage collection for " <> condense' slot
+          "Performed a garbage collection for " <> condenseT slot
         ChainDB.ScheduledGC slot _difft -> \_o ->
-          "Scheduled a garbage collection for " <> condense' slot
+          "Scheduled a garbage collection for " <> condenseT slot
       WithTip tip (ChainDB.TraceOpenEvent ev) -> case ev of
         ChainDB.OpenedDB immTip tip' -> \_o ->
-          "Opened db with immutable tip at " <> condense' immTip <>
-          " and tip " <> condense' tip'
+          "Opened db with immutable tip at " <> condenseT immTip <>
+          " and tip " <> condenseT tip'
         ChainDB.ClosedDB immTip tip' -> \_o ->
-          "Closed db with immutable tip at " <> condense' immTip <>
-          " and tip " <> condense' tip'
+          "Closed db with immutable tip at " <> condenseT immTip <>
+          " and tip " <> condenseT tip'
         ChainDB.ReopenedDB immTip tip' -> \_o ->
-          "Reopened db with immutable tip at " <> condense' immTip <>
-          " and tip " <> condense' tip'
+          "Reopened db with immutable tip at " <> condenseT immTip <>
+          " and tip " <> condenseT tip'
         ChainDB.OpenedImmDB immTip epoch -> \_o ->
-          "Opened imm db with immutable tip at " <> condense' immTip <>
-          " and epoch " <> show' epoch
+          "Opened imm db with immutable tip at " <> condenseT immTip <>
+          " and epoch " <> showT epoch
         ChainDB.OpenedVolDB -> \_o -> "Opened vol db"
         ChainDB.OpenedLgrDB -> \_o -> "Opened lgr db"
       WithTip tip (ChainDB.TraceReaderEvent ev) -> case ev of
