@@ -145,23 +145,23 @@ instance ElidingTracer (WithSeverity (ChainDB.TraceEvent blk)) where
   isEquivalent (WithSeverity s1 (ChainDB.TraceGCEvent ev1))
                (WithSeverity s2 (ChainDB.TraceGCEvent ev2)) =
                   s1 == s2 && indexGCType ev1 == indexGCType ev2
-  isEquivalent (WithSeverity s1 (WithTip _tip1 (ChainDB.AddedToCurrentChain _ _ _)))
-               (WithSeverity s2 (WithTip _tip2 (ChainDB.AddedToCurrentChain _ _ _))) =
+  isEquivalent (WithSeverity s1 (ChainDB.TraceAddBlockEvent (ChainDB.AddedToCurrentChain _ _ _)))
+               (WithSeverity s2 (ChainDB.TraceAddBlockEvent (ChainDB.AddedToCurrentChain _ _ _))) =
                   s1 == s2
    
   isEquivalent _ _ = False
   -- the types to be elided
   doelide (WithSeverity _ (ChainDB.TraceLedgerReplayEvent _)) = True
   doelide (WithSeverity _ (ChainDB.TraceGCEvent _)) = True
-  doelide (WithSeverity _ (ChainDB.AddedToCurrentChain _ _ _)) = True
+  doelide (WithSeverity _ (ChainDB.TraceAddBlockEvent (ChainDB.AddedToCurrentChain _ _ _))) = True
   doelide _ = False
   conteliding _tverb _tr _ (Nothing, _count) = return (Nothing, 0)
-  conteliding _tverb tr ev@(WithSeverity _ (WithTip _ (ChainDB.AddedToCurrentChain _ _ _))) (_old, count) = do
+  conteliding _tverb tr ev@(WithSeverity _ (ChainDB.TraceAddBlockEvent (ChainDB.AddedToCurrentChain _ _ _))) (_old, count) = do
       when (count > 0 && count `mod` 100 == 0) $ do  -- report every 100th message
           meta <- mkLOMeta (getSeverityAnnotation ev) (getPrivacyAnnotation ev)
           traceNamedObject tr (meta, LogValue "silently added blocks so far" (PureI $ toInteger count))
       return (Just ev, count + 1)
-  conteliding _tverb tr ev@(WithSeverity _ (WithTip _ (ChainDB.TraceGCEvent _))) (_old, count) = do
+  conteliding _tverb tr ev@(WithSeverity _ (ChainDB.TraceGCEvent _)) (_old, count) = do
       when (count > 0 && count `mod` 100 == 0) $ do  -- report every 100th message
           meta <- mkLOMeta (getSeverityAnnotation ev) (getPrivacyAnnotation ev)
           traceNamedObject tr (meta, LogValue "messages elided so far" (PureI $ toInteger count))
