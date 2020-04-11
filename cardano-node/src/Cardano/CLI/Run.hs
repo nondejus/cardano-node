@@ -62,6 +62,7 @@ import           Cardano.CLI.Genesis
 import           Cardano.CLI.Key
 import           Cardano.CLI.Ops
 import           Cardano.CLI.Parsers
+import           Cardano.CLI.Shelley.Run (runShelleyCommand)
 import           Cardano.CLI.Tx
 import           Cardano.Common.LocalSocket
 import           Cardano.Config.Types
@@ -71,6 +72,7 @@ runClientCommand :: ClientCommand -> ExceptT CliError IO ()
 runClientCommand cc =
   case cc of
     ByronClientCommand bc -> runByronClientCommand bc
+    ShelleyClientCommand bc -> runShelleyCommand bc
     DisplayVersion -> runDisplayVersion
     Genesis outDir params ptcl -> runGenesisCommand outDir params ptcl
     GetLocalNodeTip configFp mSockPath -> runGetLocalNodeTip configFp mSockPath
