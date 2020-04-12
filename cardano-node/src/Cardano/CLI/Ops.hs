@@ -232,6 +232,7 @@ data CliError
   | UpdateProposalSubmissionError !RealPBFTError
   | VerificationKeyDeserialisationFailed !FilePath !Text
   | FileNotFoundError !FilePath
+  | IOError !FilePath !IOException
 
 
 instance Show CliError where
@@ -298,6 +299,8 @@ instance Show CliError where
     = "Verification key '" <> fp <> "' read failure: "<> T.unpack err
   show (FileNotFoundError fp)
     = "File '" <> fp <> "' not found!"
+  show (IOError fp ioe)
+    = "File '" <> fp <> "': " ++ show ioe
 
 data RealPBFTError
   = IncorrectProtocolSpecified !Protocol

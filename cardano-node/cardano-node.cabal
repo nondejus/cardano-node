@@ -35,6 +35,7 @@ library
                        Cardano.CLI.Run
                        Cardano.CLI.Shelley.Parsers
                        Cardano.CLI.Shelley.Run
+                       Cardano.CLI.Shelley.Run.Genesis
                        Cardano.CLI.Tx
                        Cardano.Common.Help
                        Cardano.Common.LocalSocket
@@ -84,8 +85,10 @@ library
                      , ouroboros-consensus
                      , ouroboros-consensus-byron
                      , ouroboros-consensus-cardano
+                     , ouroboros-consensus-shelley
                      , ouroboros-network
                      , serialise
+                     , shelley-spec-ledger
                      , stm
                      , strict-concurrency
                      , string-conv

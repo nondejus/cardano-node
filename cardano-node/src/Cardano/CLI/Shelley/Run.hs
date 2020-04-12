@@ -16,8 +16,10 @@ import           Control.Monad.Trans.Except (ExceptT)
 
 import           Cardano.CLI.Ops (CliError)
 import           Cardano.CLI.Shelley.Parsers (ShelleyCommand(..))
-
+import           Cardano.CLI.Shelley.Run.Genesis (runGenesisCreate)
 
 runShelleyCommand :: ShelleyCommand -> ExceptT CliError IO ()
 runShelleyCommand cc =
-  liftIO . putStrLn $ "runShelleyCommand: " ++ show cc
+  case cc of
+    ShelleyCreateGenesis genSyr mstart amount -> runGenesisCreate genSyr mstart amount
+    _ -> liftIO . putStrLn $ "runShelleyCommand: " ++ show cc
