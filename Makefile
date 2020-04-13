@@ -33,4 +33,13 @@ test-ghcid-nix: ## Run ghcid on test suites with Nix
 test-chairmans-cluster:
 	@scripts/cluster-test.sh
 
-.PHONY: stylish-haskell cabal-hashes ghcid ghcid-test run-test test-ghci test-ghcid help
+profile-chainsync:
+	scripts/mainnet-via-fetcher.sh --node-config-both --nix --profile
+
+clean-state:
+	rm -rf db/ logs/ socket/ *.prof *.prof.html cluster.*
+
+clean: clean-state
+	rm -rf dist-newstyle .stack-work $(shell find . -name '*~' -or -name '*.swp')
+
+.PHONY: stylish-haskell cabal-hashes ghcid ghcid-test run-test test-ghci test-ghcid help clean
