@@ -31,8 +31,7 @@ import qualified System.IO.Error  as IO
 
 import           Cardano.BM.Trace
 import           Cardano.BM.Data.Tracer (
-                     TracingVerbosity (..), TracingFormatting (..),
-                     severityNotice, trTransformer)
+                     TracingVerbosity (..), severityNotice, trTransformer)
 import           Cardano.Slotting.Slot (WithOrigin(..))
 import           Control.Tracer
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
@@ -98,8 +97,7 @@ withShutdownHandler sfds trace action
       _ -> Nothing
 
     tracer :: Tracer IO Text
-    tracer = trTransformer TextualRepresentation MaximalVerbosity
-                           (severityNotice trace)
+    tracer = trTransformer MaximalVerbosity (severityNotice trace)
 
 -- | Windows blocking file IO calls like 'hGetChar' are not interruptable by
 -- asynchronous exceptions, as used by async 'cancel' (as of base-4.12).
@@ -123,8 +121,7 @@ getShutdownDoorbell _ = Nothing
 --   and an explanation of the reason, request a graceful shutdown.
 triggerShutdown :: ShutdownDoorbell -> Trace IO Text -> Text -> IO ()
 triggerShutdown (ShutdownDoorbell (Fd shutFd)) trace reason = do
-  traceWith (trTransformer TextualRepresentation MaximalVerbosity $
-              severityNotice trace)
+  traceWith (trTransformer MaximalVerbosity $ severityNotice trace)
     ("Ringing the node shutdown doorbell:  " <> reason)
   IO.hClose =<< IO.fdToHandle shutFd
 
@@ -169,8 +166,7 @@ maybeSpawnOnSlotSyncedShutdownHandler
 maybeSpawnOnSlotSyncedShutdownHandler npm sfds trace registry chaindb =
   case (stopOnSlotSynced npm, sfds) of
     (MaxSlotNo maxSlot, InternalShutdown _sl sd) -> do
-      traceWith (trTransformer TextualRepresentation MaximalVerbosity $
-                  severityNotice trace)
+      traceWith (trTransformer MaximalVerbosity $ severityNotice trace)
         ("will terminate upon reaching " <> (pack $ show maxSlot) :: Text)
       spawnSlotLimitTerminator maxSlot sd
     (MaxSlotNo{}, _) -> panic
