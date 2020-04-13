@@ -1,6 +1,10 @@
 {-# LANGUAGE StrictData #-}
 module Cardano.CLI.Shelley.Run.Genesis
   ( runGenesisCreate
+
+  , mkShelleyGenesis
+  , shelleyGenesisFromJSON
+  , shelleyGenesisToJSON
   ) where
 
 import           Cardano.Prelude
@@ -14,26 +18,26 @@ import           Cardano.CLI.Shelley.Parsers (GenesisDir (..))
 import           Cardano.Crypto.ProtocolMagic (ProtocolMagicId (..))
 import           Cardano.Slotting.Slot (EpochSize (..))
 
-import           Data.Aeson (Value, toJSON)
+import           Data.Aeson (Value, (.:), (.=), toJSON)
 import           Data.Aeson.Types (Parser)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Char8 as BS
 import           Data.Time.Clock (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime)
-import           Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, posixSecondsToUTCTime)
+import           Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import qualified Data.Map.Strict as Map
 
-import           Ouroboros.Consensus.BlockchainTime (SystemStart (..), slotLengthFromSec)
+import           Ouroboros.Consensus.BlockchainTime (SlotLength (..), SystemStart (..), slotLengthFromSec)
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam (..))
 import           Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..))
 import           Ouroboros.Consensus.Shelley.Protocol (TPraosStandardCrypto)
 
 import           Ouroboros.Network.Magic (NetworkMagic (..))
 
-import qualified Shelley.Spec.Ledger.Crypto as Shelley
-import           Shelley.Spec.Ledger.Keys (GenKeyHash, KeyHash)
-import qualified Shelley.Spec.Ledger.Keys as Shelley
-import qualified Shelley.Spec.Ledger.OCert as Shelley
-import qualified Shelley.Spec.Ledger.PParams as Shelley
+-- import qualified Shelley.Spec.Ledger.Crypto as Shelley
+-- import           Shelley.Spec.Ledger.Keys (GenKeyHash, KeyHash)
+-- import qualified Shelley.Spec.Ledger.Keys as Shelley
+-- import qualified Shelley.Spec.Ledger.OCert as Shelley
+-- import qualified Shelley.Spec.Ledger.PParams as Shelley
 
 import           System.FilePath ((</>))
 
@@ -66,20 +70,21 @@ shelleyGenesisToJSON sg =
     , "sgProtocolMagicId" .= toJSON (unProtocolMagicId $ sgProtocolMagicId sg)
     , "sgActiveSlotsCoeff" .= sgActiveSlotsCoeff sg
     , "sgDecentralisationParam" .= sgDecentralisationParam sg
-    , "sgSecurityParam" .= sgSecurityParam sg
-    , "sgEpochLength" .= sgEpochLength sg
+    , "sgSecurityParam" .= maxRollbacks (sgSecurityParam sg)
+    , "sgEpochLength" .= unEpochSize (sgEpochLength sg)
     , "sgSlotsPerKESPeriod" .= sgSlotsPerKESPeriod sg
     , "sgMaxKESEvolutions" .= sgMaxKESEvolutions sg
-    , "sgSlotLength" .= sgSlotLength sg
+    , "sgSlotLength" .= getSlotLength (sgSlotLength sg)
     , "sgUpdateQuorum" .= sgUpdateQuorum sg
     , "sgMaxMajorPV" .= sgMaxMajorPV sg
     , "sgMaxLovelaceSupply" .= sgMaxLovelaceSupply sg
     , "sgMaxBodySize" .= sgMaxBodySize sg
     , "sgMaxHeaderSize" .= sgMaxHeaderSize sg
-    , "sgGenDelegs" .= sgGenDelegs sg
+    , "sgGenDelegs" .= Aeson.Null -- toJSON Map.empty -- sgGenDelegs sg
+    , "sgInitialFunds" .= Aeson.Null -- toJSON Map.empty -- sgInitialFunds sg
     ]
 
-shelleyGenesisFromJSON :: Value -> ShelleyGenesis TPraosStandardCrypto
+shelleyGenesisFromJSON :: Value -> Parser (ShelleyGenesis TPraosStandardCrypto)
 shelleyGenesisFromJSON =
     Aeson.withObject "ShelleyGenesis" $ \ obj ->
       ShelleyGenesis
@@ -88,22 +93,22 @@ shelleyGenesisFromJSON =
         <*> fmap ProtocolMagicId (obj .: "sgProtocolMagicId")
         <*> obj .: "sgActiveSlotsCoeff"
         <*> obj .: "sgDecentralisationParam"
-        <*> obj .: "sgSecurityParam"
-        <*> obj .: "sgEpochLength"
+        <*> fmap SecurityParam (obj .: "sgSecurityParam")
+        <*> fmap EpochSize (obj .: "sgEpochLength")
         <*> obj .: "sgSlotsPerKESPeriod"
         <*> obj .: "sgMaxKESEvolutions"
-        <*> obj .: "sgSlotLength"
+        <*> fmap slotLengthFromSec (obj .: "sgSlotLength")
         <*> obj .: "sgUpdateQuorum"
         <*> obj .: "sgMaxMajorPV"
         <*> obj .: "sgMaxLovelaceSupply"
         <*> obj .: "sgMaxBodySize"
         <*> obj .: "sgMaxHeaderSize"
-        <*> obj .: "sgGenDelegs"
-        <*> obj .: "sgInitialFunds"
+        <*> pure Map.empty -- obj .: "sgGenDelegs"
+        <*> pure Map.empty -- obj .: "sgInitialFunds"
 
 
-defShelleyGenesis :: UTCTime -> Lovelace -> [CoreNode TPraosStandardCrypto] -> ShelleyGenesis TPraosStandardCrypto
-defShelleyGenesis startTime supply coreNodes =
+mkShelleyGenesis :: UTCTime -> Lovelace -> [a TPraosStandardCrypto] -> ShelleyGenesis TPraosStandardCrypto
+mkShelleyGenesis startTime supply _coreNodes =
   ShelleyGenesis
     { sgStartTime = SystemStart startTime
     , sgNetworkMagic = NetworkMagic 0
@@ -120,12 +125,12 @@ defShelleyGenesis startTime supply coreNodes =
     , sgMaxLovelaceSupply = unsafeGetLovelace supply
     , sgMaxBodySize = 1000 -- TODO
     , sgMaxHeaderSize = 1000 -- TODO
-    , sgGenDelegs = Map.fromList $ map toGenesis coreNodes
+    , sgGenDelegs = Map.empty -- fromList $ map toGenesis coreNodes
     , sgInitialFunds = Map.empty -- TODO
     }
   where
     k :: SecurityParam
     k = SecurityParam 2160 -- Same as Byron????
 
-    toGenesis :: _ -> (GenKeyHash TPraosStandardCrypto, KeyHash TPraosStandardCrypto)
-    toGenesis = undefined
+    -- toGenesis :: _ -> (GenKeyHash TPraosStandardCrypto, KeyHash TPraosStandardCrypto)
+    -- toGenesis = undefined
